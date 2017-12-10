@@ -9,6 +9,7 @@ import re
 import os
 import sqlite3
 import datetime
+from sys import argv
 
 
 ip_addresses = []
@@ -16,7 +17,6 @@ ip_addresses = []
 # На вход функции должны прийти mac, ip, configuration, datetime
 # в виде списка или кортежа
 def save_data_in_database(data, database = 'mikrotik_database.db'):
-
     if os.path.isfile(database):
         connection = sqlite3.connect(database)
         cursor = connection.cursor()
@@ -26,7 +26,7 @@ def save_data_in_database(data, database = 'mikrotik_database.db'):
             cursor.execute(query, data)
             print('Данные добавлены в базу')
         except sqlite3.IntegrityError as error:
-            print(error, '\nДанные существуют')        
+            print(error, '\nДанные существуют\n')        
 
         connection.commit()
         connection.close()
@@ -53,7 +53,10 @@ def connect_to_device(connection_command, password):
         # Второе приглашение - то, что нужно
         ssh.expect('\[admin@.+\]\s+>')
         ssh.expect('\[admin@.+\]\s+>')
-        result = ssh.before    
+        result = ssh.before
+        ssh.sendline('quit\r\n')  
+        ssh.close(force=True) 
+        print('Отключаемся от устройства') 
     return (result)
 
 # выделяем mac адрес устройства
@@ -67,8 +70,44 @@ def configuration_parse(data):
     return (match)
 
 
+# Главная функция. 
+def collect_data_from_devices(username, password, ip_addresses, port):
+    for address in ip_addresses:
+        print('='*79)
+        print('Подключаемся к устройству с IP адресом {} ...'.format(address))
+        connection_command = 'ssh {}@{} -p {}'.format(username, address, port)
+        
+        # Формируем данные для сохранения в базе
+        try:
+            mikrotik_output = connect_to_device(connection_command, password)
+            mac = configuration_parse(mikrotik_output)
+            now = str(datetime.datetime.today().replace(microsecond=0)) 
+            data = tuple([mac, address, mikrotik_output, now])
+            print('Данные собраны успешно. Сохраняем их в базе')
+        except pexpect.exceptions.TIMEOUT as error:
+            print('Время истекло. Произошла ошибка подключения\n')
+            continue
+        except pexpect.exceptions.EOF:
+            print('Ошибка EOF\n')
+            continue
+
+        save_data_in_database(data)  
+
+
+# Временное решение. Проверяем, ввел ли пользователь аргумент n
+# Если ввел, то значит скрипт должен сперва подключиться к шлюзу 
+try:
+    if argv[1] == 'n':
+        print('Целевые узлы находятся за NAT')
+        sys.exit()
+    else:
+        print('Введите n , если узлы находятся за NAT')
+        sys.exit()
+except IndexError:
+    print('Целывые узлы доступны напрямую')
+
+
 # Запрашиваем у пользователя данные для авторизации на устройстве. 
-# На основе данных формируем строку команды для подключения по ssh
 username = input('Username: ')
 password = getpass.getpass()
 user_input= input('IP address: ')
@@ -81,24 +120,4 @@ if os.path.isfile(user_input):
 else:   
     ip_addresses.append(user_input)
 
-
-for address in ip_addresses:
-    print('='*40)
-    print('Подключаемся к устройству с IP адресом {} ...'.format(address))
-    connection_command = 'ssh {}@{} -p {}'.format(username, address, port)
-    
-    # Формируем данные для сохранения в базе
-    try:
-        mikrotik_output = connect_to_device(connection_command, password)
-        mac = configuration_parse(mikrotik_output)
-        now = str(datetime.datetime.today().replace(microsecond=0)) 
-        data = tuple([mac, address, mikrotik_output, now])
-        print('Данные собраны успешно. Сохраняем их в базе')
-    except pexpect.exceptions.TIMEOUT as error:
-        print('Время истекло. Произошла ошибка подключения')
-        continue
-    except OSError as error:
-        print (error)
-        continue
-
-    save_data_in_database(data)
+collect_data_from_devices(username, password, ip_addresses, port)
