@@ -10,6 +10,8 @@ import os
 import sqlite3
 import datetime
 from sys import argv
+import argparse
+
 
 
 ip_addresses = []
@@ -73,7 +75,7 @@ def configuration_parse(data):
 # Главная функция. 
 def collect_data_from_devices(username, password, ip_addresses, port):
     for address in ip_addresses:
-        print('='*79)
+        print('='*72)
         print('Подключаемся к устройству с IP адресом {} ...'.format(address))
         connection_command = 'ssh {}@{} -p {}'.format(username, address, port)
         
@@ -94,30 +96,60 @@ def collect_data_from_devices(username, password, ip_addresses, port):
         save_data_in_database(data)  
 
 
-# Временное решение. Проверяем, ввел ли пользователь аргумент n
-# Если ввел, то значит скрипт должен сперва подключиться к шлюзу 
+# Сбор данных устройст, которые находятся за vpn
+def collect_data_from_devices_vpn(username_vpn, password_vpn, username, password, ip_addresses, port):
+    pass
+
+
+
+# Обработка переданных пользователем аргументов
+parser = argparse.ArgumentParser(description='collect_data_from_devices')
+parser.add_argument('-v', action='store', dest='vpn_gateway')
+parser.add_argument('-vu', action='store', dest='vpn_gateway_username')
+parser.add_argument('-a', action='store', dest='destination', required=True)
+args = parser.parse_args()
+
 try:
-    if argv[1] == 'n':
-        print('Целевые узлы находятся за NAT')
+    if args.vpn_gateway:
+        print('Целевые устройства находятся в VPN')
         sys.exit()
-    else:
-        print('Введите n , если узлы находятся за NAT')
+# ==============================================================================
+# До сюда скрипт не доходит. Пишем подключение к шлюзу VPN
+        print('Введите учетные данные для авторизации на шлюзе VPN:')
+        username_vpn = input('Username: ')
+        password_vpn = getpass.getpass()
+
+
+        print('Введите учетные данные для авторизации на целевых устройствах:')  
+        username = input('Username: ')
+        password = getpass.getpass()
+        port = input('Port: ')
+
+
+        if os.path.isfile(args.destination):
+            with open(args.destination, 'r') as f:
+                ip_addresses = f.read().split('\n')
+                print(ip_addresses)
+        else:   
+            ip_addresses.append(args.destination)
+
+        collect_data_from_devices_vpn(username_vpn, password_vpn, username, password, ip_addresses, port)
         sys.exit()
 except IndexError:
-    print('Целывые узлы доступны напрямую')
+    print('Целевые устройства доступны напрямую')
 
 
 # Запрашиваем у пользователя данные для авторизации на устройстве. 
+print('Введите учетные данные для авторизации на целевых устройствах:')
 username = input('Username: ')
 password = getpass.getpass()
-user_input= input('IP address: ')
 port = input('Port: ')
 
-if os.path.isfile(user_input):
-    with open(user_input, 'r') as f:
+if os.path.isfile(args.destination):
+    with open(args.destination, 'r') as f:
         ip_addresses = f.read().split('\n')
         print(ip_addresses)
 else:   
-    ip_addresses.append(user_input)
+    ip_addresses.append(args.destination)
 
 collect_data_from_devices(username, password, ip_addresses, port)
