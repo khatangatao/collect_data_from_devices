@@ -98,8 +98,27 @@ def collect_data_from_devices(username, password, ip_addresses, port):
 
 # Сбор данных устройст, которые находятся за vpn
 def collect_data_from_devices_vpn(username_vpn, password_vpn, username, password, ip_addresses, port):
-    pass
+    
+    for address in ip_addresses:
+        print('='*72)
+        print('Подключаемся к устройству с IP адресом {} ...'.format(address))
+        connection_command = 'ssh {}@{} -p {}'.format(username, address, port)
+        
+        # Формируем данные для сохранения в базе
+        try:
+            mikrotik_output = connect_to_device(connection_command, password)
+            mac = configuration_parse(mikrotik_output)
+            now = str(datetime.datetime.today().replace(microsecond=0)) 
+            data = tuple([mac, address, mikrotik_output, now])
+            print('Данные собраны успешно. Сохраняем их в базе')
+        except pexpect.exceptions.TIMEOUT as error:
+            print('Время истекло. Произошла ошибка подключения\n')
+            continue
+        except pexpect.exceptions.EOF:
+            print('Ошибка EOF\n')
+            continue
 
+        save_data_in_database(data)
 
 
 # Обработка переданных пользователем аргументов
