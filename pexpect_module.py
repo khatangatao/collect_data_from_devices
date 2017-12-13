@@ -47,17 +47,16 @@ def connect_to_device(connection_command, password):
             ssh.expect(['password', 'Password'])
             ssh.sendline(password)
 
-        ssh.expect('\[admin@.+\]\s+>')
+        ssh.expect('\[\S+@.+\]\s+>')
         # Отправляем нужную команду с символами перевода строки
         ssh.sendline('export compact\r\n')
-        # Ищем приглашение системы два раза. По всей видимости, первый раз
-        # это какое-то служебное приглашение. на экран терминалов не выводится
-        # Второе приглашение - то, что нужно
-        ssh.expect('\[admin@.+\]\s+>')
-        ssh.expect('\[admin@.+\]\s+>')
+        # Ищем приглашение системы два раза. Почему оно выводится два раза - не понимаю
+        ssh.expect('\[\S+@.+\]\s+>')
+        ssh.expect('\[\S+@.+\]\s+>')
+
         result = ssh.before
         ssh.sendline('quit\r\n')  
-        ssh.close(force=True) 
+        # ssh.close(force=True) 
         print('Отключаемся от устройства') 
     return (result)
 
@@ -97,28 +96,41 @@ def collect_data_from_devices(username, password, ip_addresses, port):
 
 
 # Сбор данных устройст, которые находятся за vpn
-def collect_data_from_devices_vpn(username_vpn, password_vpn, username, password, ip_addresses, port):
+def collect_data_from_devices_vpn(username_vpn, password_vpn, vpn_gateway, username, password, ip_addresses, port):
+    print('Подключаемся к шлюзу VPN с IP адресом {} ...'.format(vpn_gateway))
+    connection_command = 'ssh {}@{}'.format(username_vpn, vpn_gateway)
     
-    for address in ip_addresses:
-        print('='*72)
-        print('Подключаемся к устройству с IP адресом {} ...'.format(address))
-        connection_command = 'ssh {}@{} -p {}'.format(username, address, port)
-        
-        # Формируем данные для сохранения в базе
-        try:
-            mikrotik_output = connect_to_device(connection_command, password)
-            mac = configuration_parse(mikrotik_output)
-            now = str(datetime.datetime.today().replace(microsecond=0)) 
-            data = tuple([mac, address, mikrotik_output, now])
-            print('Данные собраны успешно. Сохраняем их в базе')
-        except pexpect.exceptions.TIMEOUT as error:
-            print('Время истекло. Произошла ошибка подключения\n')
-            continue
-        except pexpect.exceptions.EOF:
-            print('Ошибка EOF\n')
-            continue
+    with pexpect.spawn(connection_command, encoding='utf-8') as ssh:
+        answer = ssh.expect(['password', 'continue connecting'])
+        if answer == 0:
+            ssh.sendline(password_vpn)
+        else:
+            ssh.sendline('yes')
+            ssh.expect(['password'])
+            ssh.sendline(password_vpn)
 
-        save_data_in_database(data)
+        for address in ip_addresses:
+            ssh.expect('\[\S+@.+\]\$')
+            print('='*72)
+            print('Подключаемся к устройству с IP адресом {} ...'.format(address))
+            ssh.sendline('ssh {}@{} -p {}'.format(username, address, port))
+            ssh.expect(['password'])
+            ssh.sendline(password)
+
+            ssh.expect('\[\S+@.+\]\s+>')
+            # Отправляем нужную команду с символами перевода строки
+            ssh.sendline('export compact\r\n')
+            # Ищем приглашение системы два раза. Почему оно выводится два раза - не понимаю
+            ssh.expect('\[\S+@.+\]\s+>')
+            ssh.expect('\[\S+@.+\]\s+>')
+
+            result = ssh.before
+            print (result)
+            ssh.sendline('quit\r\n')  
+            # ssh.close(force=True) 
+            print('Отключаемся от устройства') 
+            
+
 
 
 # Обработка переданных пользователем аргументов
@@ -131,9 +143,7 @@ args = parser.parse_args()
 try:
     if args.vpn_gateway:
         print('Целевые устройства находятся в VPN')
-        sys.exit()
-# ==============================================================================
-# До сюда скрипт не доходит. Пишем подключение к шлюзу VPN
+
         print('Введите учетные данные для авторизации на шлюзе VPN:')
         username_vpn = input('Username: ')
         password_vpn = getpass.getpass()
@@ -152,7 +162,7 @@ try:
         else:   
             ip_addresses.append(args.destination)
 
-        collect_data_from_devices_vpn(username_vpn, password_vpn, username, password, ip_addresses, port)
+        collect_data_from_devices_vpn(username_vpn, password_vpn, args.vpn_gateway, username, password, ip_addresses, port)
         sys.exit()
 except IndexError:
     print('Целевые устройства доступны напрямую')
