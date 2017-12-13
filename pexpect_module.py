@@ -123,13 +123,15 @@ def collect_data_from_devices_vpn(username_vpn, password_vpn, vpn_gateway, usern
             # Ищем приглашение системы два раза. Почему оно выводится два раза - не понимаю
             ssh.expect('\[\S+@.+\]\s+>')
             ssh.expect('\[\S+@.+\]\s+>')
+            command_output  = ssh.before           
 
-            result = ssh.before
-            print (result)
             ssh.sendline('quit\r\n')  
             # ssh.close(force=True) 
-            print('Отключаемся от устройства') 
-            
+            print('Отключаемся от устройства')
+            mac = configuration_parse(command_output)
+            now = str(datetime.datetime.today().replace(microsecond=0)) 
+            data = tuple([mac, address, command_output, now]) 
+            save_data_in_database(data)  
 
 
 
