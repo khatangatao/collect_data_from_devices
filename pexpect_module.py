@@ -113,26 +113,44 @@ def collect_data_from_devices_vpn(username_vpn, password_vpn, vpn_gateway, usern
             ssh.expect('\[\S+@.+\]\$')
             print('='*72)
             print('Подключаемся к устройству с IP адресом {} ...'.format(address))
-            ssh.sendline('ssh {}@{} -p {}'.format(username, address, port))
-            ssh.expect(['password'])
-            ssh.sendline(password)
+            
+            try: 
+                ssh.sendline('ssh {}@{} -p {}'.format(username, address, port))
+                answer = ssh.expect(['password', 'continue connecting'])
+                if answer == 0:
+                    ssh.sendline(password)
+                else:
+                    ssh.sendline('yes')
+                    ssh.expect(['password'])
+                    ssh.sendline(password)
 
-            ssh.expect('\[\S+@.+\]\s+>')
-            # Отправляем нужную команду с символами перевода строки
-            ssh.sendline('export compact\r\n')
-            # Ищем приглашение системы два раза. Почему оно выводится два раза - не понимаю
-            ssh.expect('\[\S+@.+\]\s+>')
-            ssh.expect('\[\S+@.+\]\s+>')
-            command_output  = ssh.before           
 
-            ssh.sendline('quit\r\n')  
-            # ssh.close(force=True) 
-            print('Отключаемся от устройства')
-            mac = configuration_parse(command_output)
-            now = str(datetime.datetime.today().replace(microsecond=0)) 
-            data = tuple([mac, address, command_output, now]) 
+                # ssh.expect(['password'])
+                # ssh.sendline(password)
+
+                ssh.expect('\[\S+@.+\]\s+>')
+                # Отправляем нужную команду с символами перевода строки
+                ssh.sendline('export compact\r\n')
+                # Ищем приглашение системы два раза. Почему оно выводится два раза - не понимаю
+                ssh.expect('\[\S+@.+\]\s+>')
+                ssh.expect('\[\S+@.+\]\s+>')
+                command_output  = ssh.before           
+
+                ssh.sendline('quit\r\n')  
+                # ssh.close(force=True) 
+                print('Отключаемся от устройства')
+                mac = configuration_parse(command_output)
+                now = str(datetime.datetime.today().replace(microsecond=0)) 
+                data = tuple([mac, address, command_output, now])
+
+            except pexpect.exceptions.TIMEOUT as error:
+                print('Время истекло. Произошла ошибка подключения\n')
+                continue
+            except pexpect.exceptions.EOF:
+                print('Ошибка EOF\n')
+                continue
+
             save_data_in_database(data)  
-
 
 
 # Обработка переданных пользователем аргументов
