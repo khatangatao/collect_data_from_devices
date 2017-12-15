@@ -26,14 +26,15 @@ def save_data_in_database(data, database = 'mikrotik_database.db'):
         query = "INSERT INTO devices VALUES (?, ?, ?, ?)"    
         try:
             cursor.execute(query, data)
-            print('Данные добавлены в базу')
+            print('Конфигурация устройства добавлена в базу данных')
         except sqlite3.IntegrityError as error:
-            print(error, '\nДанные существуют\n')        
+            print(error, '\nКонфигурация этого устройства уже есть в базе данных\n')        
 
         connection.commit()
         connection.close()
     else:
         print('БД не существует. Перед добавлением данных ее сначала нужно создать ')
+        sys.exit()
 
 
 # функция подключается к микротику, выполняет команду и возвращает ее результат
@@ -71,7 +72,7 @@ def configuration_parse(data):
     return (match)
 
 
-# Главная функция. 
+# Главная функция.
 def collect_data_from_devices(username, password, ip_addresses, port):
     for address in ip_addresses:
         print('='*72)
@@ -109,39 +110,42 @@ def collect_data_from_devices_vpn(username_vpn, password_vpn, vpn_gateway, usern
             ssh.expect(['password'])
             ssh.sendline(password_vpn)
 
+
         for address in ip_addresses:
-            ssh.expect('\[\S+@.+\]\$')
-            print('='*72)
-            print('Подключаемся к устройству с IP адресом {} ...'.format(address))
             
+            # блок проверки, находимся ли мы на шлюзе-----------------------------
+            try:
+                ssh.expect('\[\S+@.+\]\$')
+            except pexpect.exceptions.TIMEOUT as error:
+                print(error, '\nСкрипт не нашел приглашения от шлюза VPN.')
+                print(ssh.before)
+                print('#' * 40)
+                print(ssh.after)
+                sys.exit()
+            print('Вы находитесь на VPN шлюзе. Что будем делать дальше?')
+            print('='*72)
+            # --------------------------------------------------------------------
+
+
+            # Блок подключения к микротику-----------------------------------------
+            print('Подключаемся к устройству с IP адресом {} ...'.format(address))            
             try: 
                 ssh.sendline('ssh {}@{} -p {}'.format(username, address, port))
                 answer = ssh.expect(['password', 'continue connecting'])
                 if answer == 0:
                     ssh.sendline(password)
-                else:
+                elif answer == 1:
                     ssh.sendline('yes')
                     ssh.expect(['password'])
                     ssh.sendline(password)
-
-
-                # ssh.expect(['password'])
-                # ssh.sendline(password)
+                else:
+                    print('Непонятная ситуация, нужно разбираться')
+                    print(ssh.before)
+                    print('#' * 40)
+                    print(ssh.after)
+                    sys.exit()
 
                 ssh.expect('\[\S+@.+\]\s+>')
-                # Отправляем нужную команду с символами перевода строки
-                ssh.sendline('export compact\r\n')
-                # Ищем приглашение системы два раза. Почему оно выводится два раза - не понимаю
-                ssh.expect('\[\S+@.+\]\s+>')
-                ssh.expect('\[\S+@.+\]\s+>')
-                command_output  = ssh.before           
-
-                ssh.sendline('quit\r\n')  
-                # ssh.close(force=True) 
-                print('Отключаемся от устройства')
-                mac = configuration_parse(command_output)
-                now = str(datetime.datetime.today().replace(microsecond=0)) 
-                data = tuple([mac, address, command_output, now])
 
             except pexpect.exceptions.TIMEOUT as error:
                 print('Время истекло. Произошла ошибка подключения\n')
@@ -149,14 +153,42 @@ def collect_data_from_devices_vpn(username_vpn, password_vpn, vpn_gateway, usern
             except pexpect.exceptions.EOF:
                 print('Ошибка EOF\n')
                 continue
+            #---------------------------------------------------------------------- 
 
-            save_data_in_database(data)  
+
+            # блок выполнения команды и сбора результата-------------------------------
+            try:
+                
+                # Отправляем нужную команду с символами перевода строки
+                ssh.sendline('export compact\r\n')
+                # Ищем приглашение системы два раза. Почему оно выводится два раза - не понимаю
+                ssh.expect('\[\S+@.+\]\s+>')
+                ssh.expect('\[\S+@.+\]\s+>')
+                command_output  = ssh.before   
+                ssh.sendline('quit\r\n')
+                print('Конфигурация устройства собрана успешно. Сохраняем в базе данных')
+
+            except pexpect.exceptions.TIMEOUT as error:
+                print('Не удалось выполнить все необходимые команды')
+                print('Пытаемся отключиться от устройства')
+                ssh.sendline('quit\r\n')            
+            
+            else:
+
+                # блок сохранения результата------------------------------------------- 
+                mac = configuration_parse(command_output)
+                now = str(datetime.datetime.today().replace(microsecond=0)) 
+                data = tuple([mac, address, command_output, now])
+                save_data_in_database(data)  
+                # ---------------------------------------------------------------------
+
+            # -------------------------------------------------------------------------
+
 
 
 # Обработка переданных пользователем аргументов
 parser = argparse.ArgumentParser(description='collect_data_from_devices')
 parser.add_argument('-v', action='store', dest='vpn_gateway')
-parser.add_argument('-vu', action='store', dest='vpn_gateway_username')
 parser.add_argument('-a', action='store', dest='destination', required=True)
 args = parser.parse_args()
 
