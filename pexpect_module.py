@@ -9,36 +9,44 @@ import re
 import os
 import sqlite3
 import datetime
-from sys import argv
 import argparse
-
-
 
 ip_addresses = []
 
-# На вход функции должны прийти mac, ip, configuration, datetime
-# в виде списка или кортежа
-def save_data_in_database(data, database = 'mikrotik_database.db'):
+
+def save_data_in_database(address, command_output, 
+                          database='mikrotik_database.db'):
+    """Функция составляет запрос к БД на основании полученной информации и 
+    выполняет его. Сделана проверка существования БД
+    """
     if os.path.isfile(database):
         connection = sqlite3.connect(database)
         cursor = connection.cursor()
+        
+        mac = configuration_parse(command_output)
+        now = str(datetime.datetime.today().replace(microsecond=0)) 
+        data = tuple([mac, address, command_output, now])
 
         query = "INSERT INTO devices VALUES (?, ?, ?, ?)"    
         try:
             cursor.execute(query, data)
             print('Конфигурация устройства добавлена в базу данных')
         except sqlite3.IntegrityError as error:
-            print(error, '\nКонфигурация этого устройства уже есть в базе данных\n')        
+            print(error, 
+                  "\nКонфигурация этого устройства уже есть в базе данных\n")        
 
         connection.commit()
         connection.close()
     else:
-        print('БД не существует. Перед добавлением данных ее сначала нужно создать ')
+        print("""БД не существует. Перед добавлением данных ее сначала 
+              нужно создать """)
         sys.exit()
 
 
-# функция подключается к микротику, выполняет команду и возвращает ее результат
 def connect_to_device(connection_command, password):
+    """Функция подключается к микротику, выполняет команду и 
+    возвращает ее результат
+    """
     with pexpect.spawn(connection_command, encoding='utf-8') as ssh:
         answer = ssh.expect(['password', 'continue connecting'])
         if answer == 0:
@@ -49,20 +57,14 @@ def connect_to_device(connection_command, password):
             ssh.sendline(password)
 
         ssh.expect('\[\S+@.+\]\s+>')
-        # Отправляем нужную команду с символами перевода строки
-        ssh.sendline('export compact\r\n')
-        # Ищем приглашение системы два раза. Почему оно выводится два раза - не понимаю
-        ssh.expect('\[\S+@.+\]\s+>')
-        ssh.expect('\[\S+@.+\]\s+>')
+        result = command_execute(ssh)
 
-        result = ssh.before
-        ssh.sendline('quit\r\n')  
-        # ssh.close(force=True) 
         print('Отключаемся от устройства') 
     return (result)
 
-# выделяем mac адрес устройства
+
 def configuration_parse(data):
+    """Выделяем mac адрес устройства"""
     for line in data.split('\n'):   
         try:            
             match = re.search('(\S\S:){5}\S\S', line).group(0)
@@ -72,8 +74,40 @@ def configuration_parse(data):
     return (match)
 
 
-# Главная функция.
-def collect_data_from_devices(username, password, ip_addresses, port):
+def command_execute(connection_id):
+    """Выполняем команду и возвращаем ее вывод пользователю"""
+    connection_id.sendline('export compact\r\n')
+    # Ищем приглашение системы два раза. Почему так нужно - не понимаю
+    connection_id.expect('\[\S+@.+\]\s+>')
+    connection_id.expect('\[\S+@.+\]\s+>')
+    result  = connection_id.before   
+    connection_id.sendline('quit\r\n') 
+    return (result)
+
+
+def mikrotik_connect(connection_id, username, address, port):
+    """Подключаемся к микротику"""
+    connection_id.sendline('ssh {}@{} -p {}'.format(username, address, port))
+    answer = connection_id.expect(['password', 'continue connecting'])
+    if answer == 0:
+        connection_id.sendline(password)
+    elif answer == 1:
+        connection_id.sendline('yes')
+        connection_id.expect(['password'])
+        connection_id.sendline(password)
+    else:
+        print('Непонятная ситуация, нужно разбираться')
+        print(connection_id.before)
+        print('#' * 40)
+        print(connection_id.after)
+        sys.exit()
+
+    connection_id.expect('\[\S+@.+\]\s+>')
+
+
+def collect_data_from_devices(parameters):
+    """Сбор данных с устройств, доступных напрямую"""
+    username, password, ip_addresses, port = parameters
     for address in ip_addresses:
         print('='*72)
         print('Подключаемся к устройству с IP адресом {} ...'.format(address))
@@ -81,11 +115,9 @@ def collect_data_from_devices(username, password, ip_addresses, port):
         
         # Формируем данные для сохранения в базе
         try:
-            mikrotik_output = connect_to_device(connection_command, password)
-            mac = configuration_parse(mikrotik_output)
-            now = str(datetime.datetime.today().replace(microsecond=0)) 
-            data = tuple([mac, address, mikrotik_output, now])
-            print('Данные собраны успешно. Сохраняем их в базе')
+            command_output = connect_to_device(connection_command, password)            
+            print('Конфигурация устройства собрана успешно.'
+                  + 'Сохраняем в базе данных')
         except pexpect.exceptions.TIMEOUT as error:
             print('Время истекло. Произошла ошибка подключения\n')
             continue
@@ -93,14 +125,16 @@ def collect_data_from_devices(username, password, ip_addresses, port):
             print('Ошибка EOF\n')
             continue
 
-        save_data_in_database(data)  
+        save_data_in_database(address, command_output)  
 
 
-# Сбор данных устройст, которые находятся за vpn
-def collect_data_from_devices_vpn(username_vpn, password_vpn, vpn_gateway, username, password, ip_addresses, port):
+def collect_data_from_devices_vpn(parameters):
+    """Сбор данных устройст, которые находятся за vpn """ 
+    (username_vpn, password_vpn, vpn_gateway, 
+     username, password, ip_addresses, port) = parameters
+
     print('Подключаемся к шлюзу VPN с IP адресом {} ...'.format(vpn_gateway))
-    connection_command = 'ssh {}@{}'.format(username_vpn, vpn_gateway)
-    
+    connection_command = 'ssh {}@{}'.format(username_vpn, vpn_gateway)    
     with pexpect.spawn(connection_command, encoding='utf-8') as ssh:
         answer = ssh.expect(['password', 'continue connecting'])
         if answer == 0:
@@ -110,10 +144,8 @@ def collect_data_from_devices_vpn(username_vpn, password_vpn, vpn_gateway, usern
             ssh.expect(['password'])
             ssh.sendline(password_vpn)
 
-
-        for address in ip_addresses:
-            
-            # блок проверки, находимся ли мы на шлюзе-----------------------------
+        for address in ip_addresses:            
+            # Блок проверки, находимся ли мы на шлюзе------------------
             try:
                 ssh.expect('\[\S+@.+\]\$')
             except pexpect.exceptions.TIMEOUT as error:
@@ -124,28 +156,13 @@ def collect_data_from_devices_vpn(username_vpn, password_vpn, vpn_gateway, usern
                 sys.exit()
             print('Вы находитесь на VPN шлюзе. Что будем делать дальше?')
             print('='*72)
-            # --------------------------------------------------------------------
+            # ---------------------------------------------------------
 
-
-            # Блок подключения к микротику-----------------------------------------
-            print('Подключаемся к устройству с IP адресом {} ...'.format(address))            
+            # Блок подключения к микротику-----------------------------
+            print('Подключаемся к устройству с IP адресом {} ...'
+                  .format(address))            
             try: 
-                ssh.sendline('ssh {}@{} -p {}'.format(username, address, port))
-                answer = ssh.expect(['password', 'continue connecting'])
-                if answer == 0:
-                    ssh.sendline(password)
-                elif answer == 1:
-                    ssh.sendline('yes')
-                    ssh.expect(['password'])
-                    ssh.sendline(password)
-                else:
-                    print('Непонятная ситуация, нужно разбираться')
-                    print(ssh.before)
-                    print('#' * 40)
-                    print(ssh.after)
-                    sys.exit()
-
-                ssh.expect('\[\S+@.+\]\s+>')
+                mikrotik_connect(ssh, username, address, port)
 
             except pexpect.exceptions.TIMEOUT as error:
                 print('Время истекло. Произошла ошибка подключения\n')
@@ -153,59 +170,34 @@ def collect_data_from_devices_vpn(username_vpn, password_vpn, vpn_gateway, usern
             except pexpect.exceptions.EOF:
                 print('Ошибка EOF\n')
                 continue
-            #---------------------------------------------------------------------- 
+            #---------------------------------------------------------- 
 
-
-            # блок выполнения команды и сбора результата-------------------------------
+            # Блок выполнения команды и сбора результата---------------
             try:
-                
-                # Отправляем нужную команду с символами перевода строки
-                ssh.sendline('export compact\r\n')
-                # Ищем приглашение системы два раза. Почему оно выводится два раза - не понимаю
-                ssh.expect('\[\S+@.+\]\s+>')
-                ssh.expect('\[\S+@.+\]\s+>')
-                command_output  = ssh.before   
-                ssh.sendline('quit\r\n')
-                print('Конфигурация устройства собрана успешно. Сохраняем в базе данных')
-
+                command_output = command_execute(ssh)
             except pexpect.exceptions.TIMEOUT as error:
                 print('Не удалось выполнить все необходимые команды')
                 print('Пытаемся отключиться от устройства')
-                ssh.sendline('quit\r\n')            
+                ssh.sendline('quit\r\n')
+                continue            
+            # ---------------------------------------------------------
             
-            else:
+            # Блок сохранения результата-------------------------------
+            print('Конфигурация устройства собрана успешно.'
+                  + 'Сохраняем в базе данных')           
+            save_data_in_database(address, command_output)  
+            # ---------------------------------------------------------
+    
 
-                # блок сохранения результата------------------------------------------- 
-                mac = configuration_parse(command_output)
-                now = str(datetime.datetime.today().replace(microsecond=0)) 
-                data = tuple([mac, address, command_output, now])
-                save_data_in_database(data)  
-                # ---------------------------------------------------------------------
-
-            # -------------------------------------------------------------------------
-
-
-
-# Обработка переданных пользователем аргументов
-parser = argparse.ArgumentParser(description='collect_data_from_devices')
-parser.add_argument('-v', action='store', dest='vpn_gateway')
-parser.add_argument('-a', action='store', dest='destination', required=True)
-args = parser.parse_args()
-
-try:
-    if args.vpn_gateway:
-        print('Целевые устройства находятся в VPN')
-
-        print('Введите учетные данные для авторизации на шлюзе VPN:')
-        username_vpn = input('Username: ')
-        password_vpn = getpass.getpass()
-
-
-        print('Введите учетные данные для авторизации на целевых устройствах:')  
+def auth(args):
+    """Функция авторизации. Возвращает набор параметров для подключения"""
+    if args.vpn_gateway == 'notvpn':
+        print('Целевые устройства доступны напрямую')
+        # Запрашиваем у пользователя данные для авторизации 
+        print('Введите учетные данные для авторизации на устройствах:')
         username = input('Username: ')
         password = getpass.getpass()
         port = input('Port: ')
-
 
         if os.path.isfile(args.destination):
             with open(args.destination, 'r') as f:
@@ -214,23 +206,46 @@ try:
         else:   
             ip_addresses.append(args.destination)
 
-        collect_data_from_devices_vpn(username_vpn, password_vpn, args.vpn_gateway, username, password, ip_addresses, port)
-        sys.exit()
-except IndexError:
-    print('Целевые устройства доступны напрямую')
+        result = [username, password, ip_addresses, port]   
+
+        return (result)
+
+    else:
+        print('Целевые устройства находятся в VPN')
+
+        print('Введите учетные данные для авторизации на шлюзе VPN:')
+        username_vpn = input('Username: ')
+        password_vpn = getpass.getpass()
+
+        print('Введите учетные данные для авторизации на устройствах:')  
+        username = input('Username: ')
+        password = getpass.getpass()
+        port = input('Port: ')
+
+        if os.path.isfile(args.destination):
+            with open(args.destination, 'r') as f:
+                ip_addresses = f.read().split('\n')
+                print(ip_addresses)
+        else:   
+            ip_addresses.append(args.destination)
+
+        result = [username_vpn, password_vpn, 
+                  args.vpn_gateway, username, 
+                  password, ip_addresses, port]
+
+        return (result)
 
 
-# Запрашиваем у пользователя данные для авторизации на устройстве. 
-print('Введите учетные данные для авторизации на целевых устройствах:')
-username = input('Username: ')
-password = getpass.getpass()
-port = input('Port: ')
+# Обработка переданных пользователем аргументов
+parser = argparse.ArgumentParser(description='collect_data_from_devices')
+parser.add_argument('-v', action='store', 
+                    dest='vpn_gateway', 
+                    default='notvpn')
+parser.add_argument('-a', action='store', dest='destination', required=True)
+args = parser.parse_args()
 
-if os.path.isfile(args.destination):
-    with open(args.destination, 'r') as f:
-        ip_addresses = f.read().split('\n')
-        print(ip_addresses)
-else:   
-    ip_addresses.append(args.destination)
-
-collect_data_from_devices(username, password, ip_addresses, port)
+parameters = auth(args)
+if len(parameters) == 4:
+    collect_data_from_devices(parameters)
+else:
+    collect_data_from_devices_vpn(parameters)
