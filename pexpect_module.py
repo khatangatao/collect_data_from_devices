@@ -11,7 +11,7 @@ import sqlite3
 import datetime
 import argparse
 
-ip_addresses = []
+# ip_addresses = []
 
 
 def save_data_in_database(address, command_output, 
@@ -85,7 +85,7 @@ def command_execute(connection_id):
     return (result)
 
 
-def mikrotik_connect(connection_id, username, address, port):
+def mikrotik_connect(connection_id, username, password, address, port):
     """Подключаемся к микротику"""
     connection_id.sendline('ssh {}@{} -p {}'.format(username, address, port))
     answer = connection_id.expect(['password', 'continue connecting'])
@@ -162,7 +162,7 @@ def collect_data_from_devices_vpn(parameters):
             print('Подключаемся к устройству с IP адресом {} ...'
                   .format(address))            
             try: 
-                mikrotik_connect(ssh, username, address, port)
+                mikrotik_connect(ssh, username, password, address, port)
 
             except pexpect.exceptions.TIMEOUT as error:
                 print('Время истекло. Произошла ошибка подключения\n')
@@ -191,6 +191,7 @@ def collect_data_from_devices_vpn(parameters):
 
 def auth(args):
     """Функция авторизации. Возвращает набор параметров для подключения"""
+    ip_addresses = []
     if args.vpn_gateway == 'notvpn':
         print('Целевые устройства доступны напрямую')
         # Запрашиваем у пользователя данные для авторизации 
@@ -203,7 +204,7 @@ def auth(args):
             with open(args.destination, 'r') as f:
                 ip_addresses = f.read().split('\n')
                 print(ip_addresses)
-        else:   
+        else:
             ip_addresses.append(args.destination)
 
         result = [username, password, ip_addresses, port]   
