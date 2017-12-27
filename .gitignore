@@ -1,3 +1,5 @@
 mikrotik_database.db
 .gitignore
 source
+.idea/
+venv/
