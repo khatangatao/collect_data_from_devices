@@ -11,8 +11,6 @@ import sqlite3
 import datetime
 import argparse
 
-# ip_addresses = []
-
 
 def save_data_in_database(address, command_output, 
                           database='mikrotik_database.db'):
@@ -65,12 +63,14 @@ def connect_to_device(connection_command, password):
 
 def configuration_parse(data):
     """Выделяем mac адрес устройства"""
-    for line in data.split('\n'):   
-        try:            
-            match = re.search('(\S\S:){5}\S\S', line).group(0)
+    match = None
+    for line in data.split('\n'):
+        match = re.search('((\S\S:){5}\S\S)', line)
+        if match:
+            match = match.group()
             break
-        except AttributeError as e:
-            pass
+    if match is None:
+        match = 'not specified'
     return (match)
 
 
